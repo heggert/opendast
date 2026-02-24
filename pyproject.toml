@@ -9,6 +9,9 @@ dependencies = [
     "requests>=2.32.5,<3",
 ]
 
+[tool.setuptools.packages.find]
+include = ["opendast*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
