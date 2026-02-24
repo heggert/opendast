@@ -1,0 +1,17 @@
+.env
+.git
+.github
+.claude
+.venv
+tests/
+__pycache__
+.coverage
+.pytest_cache
+.ruff_cache
+htmlcov/
+LICENSE
+README.md
+CLAUDE.md
+pyproject.toml
+.pre-commit-config.yaml
+.secrets.baseline
