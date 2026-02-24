@@ -16,7 +16,7 @@ class TestMain(unittest.TestCase):
             token_limit=100_000,
             api_key="sk-test",
         )
-        mock_scan.return_value = ([], 500)
+        mock_scan.return_value = ([], 500, 3, 10.0)
 
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
@@ -40,6 +40,8 @@ class TestMain(unittest.TestCase):
         mock_scan.return_value = (
             [{"severity": "CRITICAL", "vulnerability_type": "SQLi", "url": "http://example.com"}],
             1000,
+            5,
+            30.0,
         )
 
         old_stdout = sys.stdout
@@ -64,6 +66,8 @@ class TestMain(unittest.TestCase):
         mock_scan.return_value = (
             [{"severity": "MEDIUM", "vulnerability_type": "XSS", "url": "http://example.com"}],
             1000,
+            4,
+            20.0,
         )
 
         old_stdout = sys.stdout
@@ -88,6 +92,8 @@ class TestMain(unittest.TestCase):
         mock_scan.return_value = (
             [{"severity": "LOW", "vulnerability_type": "Info", "url": "http://example.com"}],
             500,
+            2,
+            8.0,
         )
 
         old_stdout = sys.stdout

@@ -1,9 +1,24 @@
 """Scan summary reporting."""
 
-from open_dast.constants import BOLD, GREEN, RED, RESET, YELLOW
+from opendast.constants import BOLD, GREEN, RED, RESET, YELLOW
+from opendast.types import Finding
 
 
-def print_summary(findings: list[dict], target: str, token_count: str) -> None:
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds into a human-readable string."""
+    m, s = divmod(int(seconds), 60)
+    if m:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
+def print_summary(
+    findings: list[Finding],
+    target: str,
+    token_count: str,
+    iterations: int = 0,
+    duration: float = 0.0,
+) -> None:
     """Print a formatted scan summary to stdout."""
     border = f"{BOLD}{'=' * 60}{RESET}"
     print(f"\n{border}")
@@ -11,6 +26,8 @@ def print_summary(findings: list[dict], target: str, token_count: str) -> None:
     print(border)
     print(f"  Target: {target}")
     print(f"  Tokens Used: {token_count}")
+    print(f"  Iterations: {iterations}")
+    print(f"  Duration: {_format_duration(duration)}")
     print(f"  Total Findings: {len(findings)}")
 
     if findings:

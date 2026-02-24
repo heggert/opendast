@@ -20,4 +20,4 @@ SHELL_TIMEOUT = 120
 MAX_SHELL_OUTPUT = 4000
 
 # Model (default; can be overridden via --model CLI arg)
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_MODEL = "claude-sonnet-4-6"

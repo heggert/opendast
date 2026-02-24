@@ -1,0 +1,39 @@
+# Scheduled Scan — GitHub Actions
+#
+# Pattern:  Run a full DAST scan on a weekly schedule. Results are advisory
+#           (they don't block anything) and surface regressions or newly
+#           disclosed vulnerability classes over time.
+#
+# Trigger:  cron schedule — every Monday at 02:00 UTC.
+#           Also supports manual dispatch for on-demand runs.
+#
+# Playbook: Default (playbooks/web_scan.md). The repo is checked out and the
+#           playbook directory is volume-mounted into the container so you
+#           can customize it without rebuilding the image.
+#
+# Prerequisites:
+#   1. Repository secret ANTHROPIC_API_KEY with your Anthropic API key.
+#   2. Replace https://staging.example.com with your staging URL.
+
+name: Weekly DAST Scan
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+  dast-scheduled:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run DAST scan
+        run: |
+          docker run --rm \
+            -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            -v "${{ github.workspace }}/playbooks:/custom-playbooks:ro" \
+            ghcr.io/heggert/opendast:latest \
+            --target "https://staging.example.com" \
+            --playbook /custom-playbooks/web_scan.md \
+            --token-limit 500000

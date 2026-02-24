@@ -5,18 +5,20 @@ import time
 from typing import Any, Protocol
 
 import anthropic
+from anthropic.types import Message, MessageParam, TextBlock, ToolResultBlockParam, ToolUseBlock
 
-from open_dast.constants import DEFAULT_MODEL, MAX_API_RETRIES, MAX_ITERATIONS, RED, RESET
-from open_dast.logger import log_info
-from open_dast.playbook import load_playbook
-from open_dast.prompt import build_system_prompt
-from open_dast.tools import TOOLS, dispatch_tool
+from opendast.constants import DEFAULT_MODEL, MAX_API_RETRIES, MAX_ITERATIONS, RED, RESET
+from opendast.logger import log_info
+from opendast.playbook import load_playbook
+from opendast.prompt import build_system_prompt
+from opendast.tools import TOOLS, dispatch_tool
+from opendast.types import Finding, HttpSender, ScanResult, ShellRunner
 
 
 class ApiClient(Protocol):
     """Protocol for the Anthropic-compatible API client."""
 
-    def create(self, **kwargs: Any) -> Any: ...
+    def create(self, **kwargs: Any) -> Message: ...
 
 
 class AnthropicClientWrapper:
@@ -25,16 +27,16 @@ class AnthropicClientWrapper:
     def __init__(self, api_key: str) -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
 
-    def create(self, **kwargs: Any) -> Any:
+    def create(self, **kwargs: Any) -> Message:
         return self._client.messages.create(**kwargs)
 
 
 def call_api_with_retries(
     client: ApiClient,
-    messages: list[dict],
+    messages: list[MessageParam],
     system_prompt: str,
     model: str = DEFAULT_MODEL,
-) -> Any | None:
+) -> Message | None:
     """Call the Anthropic API with retry logic. Returns response or None."""
     for attempt in range(1, MAX_API_RETRIES + 1):
         try:
@@ -65,7 +67,11 @@ def call_api_with_retries(
             sys.exit(2)
         except anthropic.APIStatusError as e:
             log_info(f"API error: {e.status_code} - {e.message}")
-            if attempt < MAX_API_RETRIES:
+            if e.status_code == 529:
+                wait = 30 * attempt
+                log_info(f"API overloaded. Waiting {wait}s (attempt {attempt}/{MAX_API_RETRIES})")
+                time.sleep(wait)
+            elif attempt < MAX_API_RETRIES:
                 time.sleep(2**attempt)
             else:
                 log_info("API errors persisted. Aborting scan.")
@@ -79,9 +85,10 @@ def run_scan(
     token_limit: int,
     client: ApiClient,
     model: str = DEFAULT_MODEL,
-    http_send=None,
-    shell_run=None,
-) -> tuple[list[dict], int]:
+    http_send: HttpSender | None = None,
+    shell_run: ShellRunner | None = None,
+    playbook_content: str = "",
+) -> ScanResult:
     """Execute the agentic DAST scan loop.
 
     Args:
@@ -92,18 +99,22 @@ def run_scan(
         model: Claude model ID to use.
         http_send: Optional injectable HTTP callable for testing.
         shell_run: Optional injectable subprocess runner for testing.
+        playbook_content: Inline playbook markdown. If non-empty, takes precedence
+            over playbook_path.
 
     Returns:
-        Tuple of (findings list, total token count).
+        ScanResult with findings, token count, iterations, and duration.
     """
-    playbook_content = load_playbook(playbook_path)
+    if not playbook_content:
+        playbook_content = load_playbook(playbook_path)
     system_prompt = build_system_prompt(target, playbook_content)
 
-    findings: list[dict] = []
+    findings: list[Finding] = []
     token_count = 0
     iteration = 0
+    start_time = time.monotonic()
 
-    messages = [
+    messages: list[MessageParam] = [
         {
             "role": "user",
             "content": f"Begin the DAST scan against {target}. Follow the playbook systematically.",
@@ -118,7 +129,7 @@ def run_scan(
 
         if response is None:
             log_info("No response from API. Aborting scan.")
-            return findings, token_count
+            return ScanResult(findings, token_count, iteration, time.monotonic() - start_time)
 
         # Track tokens
         token_count += response.usage.input_tokens + response.usage.output_tokens
@@ -127,7 +138,7 @@ def run_scan(
         # Check if Claude is done (no more tool calls)
         if response.stop_reason == "end_turn":
             for block in response.content:
-                if hasattr(block, "text"):
+                if isinstance(block, TextBlock):
                     log_info(f"Claude: {block.text[:500]}")
             break
 
@@ -135,10 +146,10 @@ def run_scan(
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": response.content})
 
-            tool_results = []
+            tool_results: list[ToolResultBlockParam] = []
             for block in response.content:
-                if block.type == "tool_use":
-                    result_text, is_error = dispatch_tool(
+                if isinstance(block, ToolUseBlock):
+                    result = dispatch_tool(
                         block.name,
                         block.input,
                         target,
@@ -146,15 +157,15 @@ def run_scan(
                         http_send=http_send,
                         shell_run=shell_run,
                     )
-                    tool_result = {
+                    tool_result: ToolResultBlockParam = {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": result_text,
+                        "content": result.text,
                     }
-                    if is_error:
+                    if result.is_error:
                         tool_result["is_error"] = True
                     tool_results.append(tool_result)
-                elif hasattr(block, "text") and block.text:
+                elif isinstance(block, TextBlock) and block.text:
                     log_info(f"Claude: {block.text[:300]}")
 
             messages.append({"role": "user", "content": tool_results})
@@ -170,4 +181,4 @@ def run_scan(
     if iteration >= MAX_ITERATIONS:
         log_info(f"Iteration limit ({MAX_ITERATIONS}) reached. Ending scan.")
 
-    return findings, token_count
+    return ScanResult(findings, token_count, iteration, time.monotonic() - start_time)

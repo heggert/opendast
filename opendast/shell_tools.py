@@ -2,14 +2,14 @@
 
 import re
 import subprocess
-from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlparse
 
-from open_dast.constants import MAX_SHELL_OUTPUT, SHELL_TIMEOUT
-from open_dast.logger import log_info
+from anthropic.types import ToolParam
 
-# Type alias for the injectable subprocess runner
-ShellRunner = Callable[..., subprocess.CompletedProcess]
+from opendast.constants import MAX_SHELL_OUTPUT, SHELL_TIMEOUT
+from opendast.logger import log_info
+from opendast.types import ShellRunner, ShellToolConfig
 
 # Characters that could enable injection even without shell=True
 DANGEROUS_PATTERN = re.compile(r"[;&|`$(){}\[\]<>!\\]")
@@ -27,10 +27,23 @@ def validate_scope_host_only(target_base: str, host: str) -> str | None:
 
 
 def validate_scope_url(target_base: str, url: str) -> str | None:
-    """Return error string if url does not start with target_base."""
-    normalized = target_base.rstrip("/")
-    if not url.startswith(normalized):
-        return f"ERROR: URL '{url}' is outside target scope '{normalized}'. Blocked."
+    """Return error string if url is not within the target scope.
+
+    Uses ``urlparse`` hostname comparison to prevent credential-injection
+    bypasses like ``http://target@evil.com``.
+    """
+    target = urlparse(target_base)
+    parsed = urlparse(url)
+
+    if parsed.scheme != target.scheme:
+        return f"ERROR: URL '{url}' is outside target scope '{target_base}'. Blocked."
+    if parsed.hostname != target.hostname:
+        return f"ERROR: URL '{url}' is outside target scope '{target_base}'. Blocked."
+
+    target_path = target.path.rstrip("/")
+    if target_path and not parsed.path.startswith(target_path):
+        return f"ERROR: URL '{url}' is outside target scope '{target_base}'. Blocked."
+
     return None
 
 
@@ -48,7 +61,7 @@ def sanitize_args(args: list[str]) -> str | None:
 # ─── Per-Tool Argument Builders ──────────────────────────────────────────────
 
 
-def build_nmap_args(tool_input: dict, target_base: str) -> list[str]:
+def build_nmap_args(tool_input: dict[str, Any], target_base: str) -> list[str]:
     """Build nmap command args. Only allows safe scan types."""
     host = tool_input["host"]
     ports = tool_input.get("ports", "")
@@ -72,7 +85,7 @@ def build_nmap_args(tool_input: dict, target_base: str) -> list[str]:
     return args
 
 
-def build_nikto_args(tool_input: dict, target_base: str) -> list[str]:
+def build_nikto_args(tool_input: dict[str, Any], target_base: str) -> list[str]:
     """Build nikto command args."""
     host = tool_input["host"]
     port = tool_input.get("port", "80")
@@ -83,14 +96,14 @@ def build_nikto_args(tool_input: dict, target_base: str) -> list[str]:
     return args
 
 
-def build_sslyze_args(tool_input: dict, target_base: str) -> list[str]:
+def build_sslyze_args(tool_input: dict[str, Any], target_base: str) -> list[str]:
     """Build sslyze command args."""
     host = tool_input["host"]
     port = tool_input.get("port", "443")
     return [f"{host}:{port}"]
 
 
-def build_dig_args(tool_input: dict, target_base: str) -> list[str]:
+def build_dig_args(tool_input: dict[str, Any], target_base: str) -> list[str]:
     """Build dig command args."""
     host = tool_input["host"]
     record_type = tool_input.get("record_type", "A")
@@ -100,25 +113,7 @@ def build_dig_args(tool_input: dict, target_base: str) -> list[str]:
     return [host, record_type.upper(), "+short"]
 
 
-def build_whatweb_args(tool_input: dict, target_base: str) -> list[str]:
-    """Build whatweb command args."""
-    url = tool_input["url"]
-    aggression = tool_input.get("aggression", "1")
-    if aggression not in ("1", "2", "3"):
-        aggression = "1"
-    return ["-a", aggression, "--color=never", url]
-
-
-def build_dirb_args(tool_input: dict, target_base: str) -> list[str]:
-    """Build dirb command args."""
-    url = tool_input["url"]
-    wordlist = tool_input.get("wordlist", "/usr/share/dirb/wordlists/common.txt")
-    if not wordlist.startswith("/usr/share/dirb/wordlists/"):
-        raise ValueError("Wordlist must be in /usr/share/dirb/wordlists/")
-    return [url, wordlist, "-S", "-r"]
-
-
-def build_curl_args(tool_input: dict, target_base: str) -> list[str]:
+def build_curl_args(tool_input: dict[str, Any], target_base: str) -> list[str]:
     """Build curl command args."""
     url = tool_input["url"]
     method = tool_input.get("method", "GET")
@@ -133,6 +128,8 @@ def build_curl_args(tool_input: dict, target_base: str) -> list[str]:
         args.append("-L")
     args.extend(["-X", method])
     for k, v in headers.items():
+        if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
+            raise ValueError(f"Header '{k}' contains illegal newline characters.")
         args.extend(["-H", f"{k}: {v}"])
     args.append(url)
     return args
@@ -140,7 +137,7 @@ def build_curl_args(tool_input: dict, target_base: str) -> list[str]:
 
 # ─── Tool Registry ───────────────────────────────────────────────────────────
 
-SHELL_TOOL_REGISTRY: dict[str, dict] = {
+SHELL_TOOL_REGISTRY: dict[str, ShellToolConfig] = {
     "run_nmap": {
         "binary": "nmap",
         "scope_mode": "host_only",
@@ -161,16 +158,6 @@ SHELL_TOOL_REGISTRY: dict[str, dict] = {
         "scope_mode": "host_only",
         "build_args": build_dig_args,
     },
-    "run_whatweb": {
-        "binary": "whatweb",
-        "scope_mode": "url_scope",
-        "build_args": build_whatweb_args,
-    },
-    "run_dirb": {
-        "binary": "dirb",
-        "scope_mode": "url_scope",
-        "build_args": build_dirb_args,
-    },
     "run_curl": {
         "binary": "curl",
         "scope_mode": "url_scope",
@@ -181,7 +168,7 @@ SHELL_TOOL_REGISTRY: dict[str, dict] = {
 
 # ─── Tool Definitions (Anthropic tool_use format) ────────────────────────────
 
-SHELL_TOOL_DEFINITIONS = [
+SHELL_TOOL_DEFINITIONS: list[ToolParam] = [
     {
         "name": "run_nmap",
         "description": (
@@ -277,49 +264,6 @@ SHELL_TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "run_whatweb",
-        "description": (
-            "Fingerprint web technologies on the target URL. Identifies CMS, frameworks, "
-            "server software, JavaScript libraries, and other technologies."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "Target URL. Must be within the target scope.",
-                },
-                "aggression": {
-                    "type": "string",
-                    "enum": ["1", "2", "3"],
-                    "description": "Aggression level: '1'=stealthy (default), '3'=aggressive.",
-                },
-            },
-            "required": ["url"],
-        },
-    },
-    {
-        "name": "run_dirb",
-        "description": (
-            "Brute-force directories and files on the target URL. Discovers hidden paths, "
-            "admin panels, backup files, and other content not linked from the main site."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "Target base URL. Must be within the target scope.",
-                },
-                "wordlist": {
-                    "type": "string",
-                    "description": "Path to wordlist file (default: /usr/share/dirb/wordlists/common.txt). Must be in /usr/share/dirb/wordlists/.",
-                },
-            },
-            "required": ["url"],
-        },
-    },
-    {
         "name": "run_curl",
         "description": (
             "Execute a curl command for advanced HTTP testing. Useful for testing specific "
@@ -361,7 +305,9 @@ SHELL_TOOL_DEFINITIONS = [
 # ─── Generic Executor ────────────────────────────────────────────────────────
 
 
-def _validate_scope(config: dict, tool_input: dict, target_base: str) -> str | None:
+def _validate_scope(
+    config: ShellToolConfig, tool_input: dict[str, Any], target_base: str
+) -> str | None:
     """Validate scope based on the tool's scope_mode."""
     scope_mode = config["scope_mode"]
     if scope_mode == "host_only":
@@ -373,7 +319,7 @@ def _validate_scope(config: dict, tool_input: dict, target_base: str) -> str | N
 
 def execute_shell_tool(
     tool_name: str,
-    tool_input: dict,
+    tool_input: dict[str, Any],
     target_base: str,
     shell_run: ShellRunner | None = None,
 ) -> str:

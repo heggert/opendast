@@ -1,8 +1,8 @@
-"""Tests for open_dast.constants."""
+"""Tests for opendast.constants."""
 
 import unittest
 
-from open_dast import constants
+from opendast import constants
 
 
 class TestConstants(unittest.TestCase):

@@ -1,14 +1,17 @@
-"""Tests for open_dast.scanner."""
+"""Tests for opendast.scanner."""
 
 import io
 import os
 import sys
 import tempfile
 import unittest
+from typing import Any
 from unittest.mock import MagicMock, patch
 
-from open_dast.constants import MAX_ITERATIONS
-from open_dast.scanner import AnthropicClientWrapper, call_api_with_retries, run_scan
+from anthropic.types import TextBlock, ToolUseBlock
+
+from opendast.constants import MAX_ITERATIONS
+from opendast.scanner import AnthropicClientWrapper, call_api_with_retries, run_scan
 
 
 class FakeUsage:
@@ -17,24 +20,27 @@ class FakeUsage:
         self.output_tokens = output_tokens
 
 
-class FakeTextBlock:
-    def __init__(self, text="Done"):
-        self.type = "text"
-        self.text = text
+def make_text_block(text: str = "Done") -> TextBlock:
+    return TextBlock(type="text", text=text)
 
 
-class FakeToolUseBlock:
-    def __init__(self, name="report_pass", input_data=None, tool_id="tool_1"):
-        self.type = "tool_use"
-        self.name = name
-        self.input = input_data or {"test_category": "Test", "details": "Passed"}
-        self.id = tool_id
+def make_tool_use_block(
+    name: str = "report_pass",
+    input_data: dict[str, Any] | None = None,
+    tool_id: str = "tool_1",
+) -> ToolUseBlock:
+    return ToolUseBlock(
+        type="tool_use",
+        id=tool_id,
+        name=name,
+        input=input_data or {"test_category": "Test", "details": "Passed"},
+    )
 
 
 class FakeResponse:
     def __init__(self, stop_reason="end_turn", content=None, usage=None):
         self.stop_reason = stop_reason
-        self.content = content or [FakeTextBlock()]
+        self.content = content or [make_text_block()]
         self.usage = usage or FakeUsage()
 
 
@@ -45,7 +51,7 @@ class FakeApiClient:
         self._responses = list(responses) if responses else [FakeResponse()]
         self._call_count = 0
 
-    def create(self, **kwargs):
+    def create(self, **kwargs: Any) -> Any:  # test fake — no real Message needed
         if self._call_count < len(self._responses):
             resp = self._responses[self._call_count]
             self._call_count += 1
@@ -64,7 +70,7 @@ class TestCallApiWithRetries(unittest.TestCase):
             sys.stdout = old_stdout
         self.assertIsNotNone(result)
 
-    @patch("open_dast.scanner.time.sleep")
+    @patch("opendast.scanner.time.sleep")
     def test_connection_error_retries_then_fails(self, mock_sleep):
         import anthropic
 
@@ -79,7 +85,7 @@ class TestCallApiWithRetries(unittest.TestCase):
             sys.stdout = old_stdout
         self.assertIsNone(result)
 
-    @patch("open_dast.scanner.time.sleep")
+    @patch("opendast.scanner.time.sleep")
     def test_rate_limit_retries(self, mock_sleep):
         import anthropic
 
@@ -125,7 +131,7 @@ class TestCallApiWithRetries(unittest.TestCase):
             sys.stdout = old_stdout
             sys.stderr = old_stderr
 
-    @patch("open_dast.scanner.time.sleep")
+    @patch("opendast.scanner.time.sleep")
     def test_api_status_error_retries_then_fails(self, mock_sleep):
         import anthropic
 
@@ -144,6 +150,54 @@ class TestCallApiWithRetries(unittest.TestCase):
             sys.stdout = old_stdout
         self.assertIsNone(result)
 
+    @patch("opendast.scanner.time.sleep")
+    def test_overloaded_529_uses_long_backoff(self, mock_sleep):
+        import anthropic
+
+        client = MagicMock()
+        resp = FakeResponse()
+        client.create.side_effect = [
+            anthropic.APIStatusError(
+                message="Overloaded",
+                response=MagicMock(status_code=529, headers={}),
+                body=None,
+            ),
+            resp,
+        ]
+
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            result = call_api_with_retries(client, [], "prompt")
+        finally:
+            sys.stdout = old_stdout
+        self.assertIsNotNone(result)
+        mock_sleep.assert_called_once_with(30)
+
+    @patch("opendast.scanner.time.sleep")
+    def test_overloaded_529_retries_all_attempts(self, mock_sleep):
+        import anthropic
+
+        client = MagicMock()
+        client.create.side_effect = anthropic.APIStatusError(
+            message="Overloaded",
+            response=MagicMock(status_code=529, headers={}),
+            body=None,
+        )
+
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            result = call_api_with_retries(client, [], "prompt")
+        finally:
+            sys.stdout = old_stdout
+        # 529 retries all attempts (doesn't abort early like other status errors)
+        self.assertIsNone(result)
+        self.assertEqual(mock_sleep.call_count, 3)
+        mock_sleep.assert_any_call(30)
+        mock_sleep.assert_any_call(60)
+        mock_sleep.assert_any_call(90)
+
 
 class TestRunScan(unittest.TestCase):
     def _create_playbook(self):
@@ -158,7 +212,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, tokens = run_scan(
+                findings, tokens, iterations, duration = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -168,6 +222,8 @@ class TestRunScan(unittest.TestCase):
                 sys.stdout = old_stdout
             self.assertEqual(findings, [])
             self.assertGreater(tokens, 0)
+            self.assertEqual(iterations, 1)
+            self.assertGreaterEqual(duration, 0.0)
         finally:
             os.unlink(playbook)
 
@@ -177,8 +233,10 @@ class TestRunScan(unittest.TestCase):
             tool_response = FakeResponse(
                 stop_reason="tool_use",
                 content=[
-                    FakeTextBlock("Testing..."),
-                    FakeToolUseBlock("report_pass", {"test_category": "SQLi", "details": "Safe"}),
+                    make_text_block("Testing..."),
+                    make_tool_use_block(
+                        "report_pass", {"test_category": "SQLi", "details": "Safe"}
+                    ),
                 ],
             )
             end_response = FakeResponse(stop_reason="end_turn")
@@ -187,7 +245,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, tokens = run_scan(
+                findings, tokens, iterations, duration = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -196,6 +254,7 @@ class TestRunScan(unittest.TestCase):
             finally:
                 sys.stdout = old_stdout
             self.assertEqual(findings, [])
+            self.assertEqual(iterations, 2)
         finally:
             os.unlink(playbook)
 
@@ -211,7 +270,7 @@ class TestRunScan(unittest.TestCase):
             }
             tool_response = FakeResponse(
                 stop_reason="tool_use",
-                content=[FakeToolUseBlock("report_vulnerability", vuln_data)],
+                content=[make_tool_use_block("report_vulnerability", vuln_data)],
             )
             end_response = FakeResponse(stop_reason="end_turn")
             client = FakeApiClient([tool_response, end_response])
@@ -219,7 +278,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, _ = run_scan(
+                findings, *_ = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -228,7 +287,7 @@ class TestRunScan(unittest.TestCase):
             finally:
                 sys.stdout = old_stdout
             self.assertEqual(len(findings), 1)
-            self.assertEqual(findings[0]["severity"], "HIGH")
+            self.assertEqual(findings[0].get("severity"), "HIGH")
         finally:
             os.unlink(playbook)
 
@@ -238,7 +297,9 @@ class TestRunScan(unittest.TestCase):
             # Create responses that keep going with tool calls
             tool_resp = FakeResponse(
                 stop_reason="tool_use",
-                content=[FakeToolUseBlock("report_pass", {"test_category": "T", "details": "ok"})],
+                content=[
+                    make_tool_use_block("report_pass", {"test_category": "T", "details": "ok"})
+                ],
                 usage=FakeUsage(input_tokens=60000, output_tokens=50000),
             )
             client = FakeApiClient([tool_resp] * 5)
@@ -246,7 +307,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, tokens = run_scan(
+                findings, tokens, iterations, duration = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -266,11 +327,11 @@ class TestRunScan(unittest.TestCase):
             client.create.return_value = None
 
             # Patch call_api_with_retries to return None
-            with patch("open_dast.scanner.call_api_with_retries", return_value=None):
+            with patch("opendast.scanner.call_api_with_retries", return_value=None):
                 old_stdout = sys.stdout
                 sys.stdout = io.StringIO()
                 try:
-                    findings, tokens = run_scan(
+                    findings, tokens, iterations, duration = run_scan(
                         target="http://example.com",
                         playbook_path=playbook,
                         token_limit=100_000,
@@ -280,6 +341,7 @@ class TestRunScan(unittest.TestCase):
                     sys.stdout = old_stdout
             self.assertEqual(findings, [])
             self.assertEqual(tokens, 0)
+            self.assertEqual(iterations, 1)
         finally:
             os.unlink(playbook)
 
@@ -292,7 +354,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, tokens = run_scan(
+                findings, *_ = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -317,7 +379,7 @@ class TestRunScan(unittest.TestCase):
             tool_response = FakeResponse(
                 stop_reason="tool_use",
                 content=[
-                    FakeToolUseBlock(
+                    make_tool_use_block(
                         "send_http_request",
                         {"method": "GET", "url": "http://example.com/"},
                     )
@@ -348,7 +410,7 @@ class TestRunScan(unittest.TestCase):
             tool_response = FakeResponse(
                 stop_reason="tool_use",
                 content=[
-                    FakeToolUseBlock(
+                    make_tool_use_block(
                         "send_http_request",
                         {},  # Missing required fields -> KeyError
                     )
@@ -360,7 +422,7 @@ class TestRunScan(unittest.TestCase):
             old_stdout = sys.stdout
             sys.stdout = io.StringIO()
             try:
-                findings, _ = run_scan(
+                findings, *_ = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=100_000,
@@ -388,7 +450,7 @@ class TestRunScan(unittest.TestCase):
             tool_response = FakeResponse(
                 stop_reason="tool_use",
                 content=[
-                    FakeToolUseBlock(
+                    make_tool_use_block(
                         "run_nmap",
                         {"host": "example.com"},
                     )
@@ -419,7 +481,9 @@ class TestRunScan(unittest.TestCase):
             # Create enough tool responses to hit the iteration limit
             tool_resp = FakeResponse(
                 stop_reason="tool_use",
-                content=[FakeToolUseBlock("report_pass", {"test_category": "T", "details": "ok"})],
+                content=[
+                    make_tool_use_block("report_pass", {"test_category": "T", "details": "ok"})
+                ],
                 usage=FakeUsage(input_tokens=10, output_tokens=10),
             )
             client = FakeApiClient([tool_resp] * (MAX_ITERATIONS + 1))
@@ -428,7 +492,7 @@ class TestRunScan(unittest.TestCase):
             captured = io.StringIO()
             sys.stdout = captured
             try:
-                findings, _ = run_scan(
+                findings, *_ = run_scan(
                     target="http://example.com",
                     playbook_path=playbook,
                     token_limit=1_000_000,
@@ -440,9 +504,51 @@ class TestRunScan(unittest.TestCase):
         finally:
             os.unlink(playbook)
 
+    def test_inline_playbook_content_bypasses_file(self):
+        """When playbook_content is provided, no file is read."""
+        client = FakeApiClient([FakeResponse(stop_reason="end_turn")])
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            with patch("opendast.scanner.load_playbook") as mock_load:
+                findings, tokens, *_ = run_scan(
+                    target="http://example.com",
+                    playbook_path="nonexistent.md",
+                    token_limit=100_000,
+                    client=client,
+                    playbook_content="# Inline\nTest SQLi",
+                )
+                mock_load.assert_not_called()
+        finally:
+            sys.stdout = old_stdout
+        self.assertEqual(findings, [])
+        self.assertGreater(tokens, 0)
+
+    def test_empty_playbook_content_falls_back_to_file(self):
+        """When playbook_content is empty, load_playbook is called."""
+        playbook = self._create_playbook()
+        try:
+            client = FakeApiClient([FakeResponse(stop_reason="end_turn")])
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                with patch("opendast.scanner.load_playbook", return_value="# File") as mock_load:
+                    run_scan(
+                        target="http://example.com",
+                        playbook_path=playbook,
+                        token_limit=100_000,
+                        client=client,
+                        playbook_content="",
+                    )
+                    mock_load.assert_called_once_with(playbook)
+            finally:
+                sys.stdout = old_stdout
+        finally:
+            os.unlink(playbook)
+
 
 class TestAnthropicClientWrapper(unittest.TestCase):
-    @patch("open_dast.scanner.anthropic.Anthropic")
+    @patch("opendast.scanner.anthropic.Anthropic")
     def test_create_delegates_to_client(self, MockAnthropic):
         mock_client = MagicMock()
         MockAnthropic.return_value = mock_client

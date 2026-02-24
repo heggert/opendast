@@ -2,7 +2,7 @@
 
 import sys
 
-from open_dast.constants import RED, RESET
+from opendast.constants import RED, RESET
 
 
 def load_playbook(path: str) -> str:

@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
@@ -22,12 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -r requirements.txt
-      - run: pip install pytest coverage
-      - run: python -m pytest tests/ -v --cov=open_dast --cov-report=term-missing
+      - run: pip install . pytest coverage
+      - run: python -m pytest tests/ -v --cov=opendast --cov-report=term-missing

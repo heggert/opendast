@@ -1,6 +1,6 @@
 """Logging utilities with ANSI color codes for CI/CD readability."""
 
-from open_dast.constants import BOLD, CYAN, GREEN, RED, RESET
+from opendast.constants import BOLD, CYAN, GREEN, RED, RESET
 
 
 def log_vuln(msg: str) -> None:

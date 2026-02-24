@@ -1,11 +1,11 @@
-"""Tests for open_dast.tools."""
+"""Tests for opendast.tools."""
 
 import io
 import sys
 import unittest
 from unittest.mock import MagicMock
 
-from open_dast.tools import (
+from opendast.tools import (
     TOOLS,
     dispatch_tool,
     handle_report_pass,
@@ -14,8 +14,8 @@ from open_dast.tools import (
 
 
 class TestToolDefinitions(unittest.TestCase):
-    def test_tools_list_has_ten_entries(self):
-        self.assertEqual(len(TOOLS), 10)  # 3 core + 7 shell tools
+    def test_tools_list_has_eight_entries(self):
+        self.assertEqual(len(TOOLS), 8)  # 3 core + 5 shell tools
 
     def test_core_tool_names_present(self):
         names = {t["name"] for t in TOOLS}
@@ -30,8 +30,6 @@ class TestToolDefinitions(unittest.TestCase):
             "run_nikto",
             "run_sslyze",
             "run_dig",
-            "run_whatweb",
-            "run_dirb",
             "run_curl",
         ):
             self.assertIn(expected, names)
@@ -101,6 +99,32 @@ class TestHandleReportVulnerability(unittest.TestCase):
         # Evidence in log should be max 500 chars
         output = captured.getvalue()
         self.assertIn("VULN", output)
+
+    def test_long_description_truncated_in_log(self):
+        findings = []
+        vuln = {
+            "vulnerability_type": "XSS",
+            "severity": "HIGH",
+            "url": "http://example.com",
+            "description": "D" * 1000,
+            "evidence": "proof",
+        }
+        captured = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            handle_report_vulnerability(vuln, findings)
+        finally:
+            sys.stdout = old_stdout
+        output = captured.getvalue()
+        # The log should contain at most 500 chars of the description
+        # (each log line has prefix + content, so check the D's are capped)
+        description_line = [line for line in output.splitlines() if "Description:" in line][0]
+        # "Description:" itself contains a "D", so cap is 500 + 1
+        d_count = description_line.count("D")
+        self.assertLessEqual(d_count, 501)
+        # But it must NOT contain the full 1000 D's
+        self.assertLess(d_count, 1000)
 
     def test_missing_optional_fields_use_defaults(self):
         findings = []
@@ -257,6 +281,44 @@ class TestDispatchTool(unittest.TestCase):
             sys.stdout = old_stdout
         self.assertFalse(is_error)
         self.assertIn("Exit code: 0", result)
+
+    def test_dispatch_unexpected_exception_hides_details(self):
+        """Unexpected exceptions should not leak internal details."""
+        mock_send = MagicMock(side_effect=RuntimeError("/home/user/.secret/db.conf not found"))
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            result, is_error = dispatch_tool(
+                "send_http_request",
+                {"method": "GET", "url": "http://example.com/"},
+                "http://example.com",
+                [],
+                http_send=mock_send,
+            )
+        finally:
+            sys.stdout = old_stdout
+        self.assertTrue(is_error)
+        self.assertIn("unexpected internal error", result)
+        # Must NOT contain the sensitive path
+        self.assertNotIn(".secret", result)
+
+    def test_dispatch_value_error_shows_message(self):
+        """ValueError/TypeError should still show their message."""
+        mock_send = MagicMock(side_effect=ValueError("bad value"))
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            result, is_error = dispatch_tool(
+                "send_http_request",
+                {"method": "GET", "url": "http://example.com/"},
+                "http://example.com",
+                [],
+                http_send=mock_send,
+            )
+        finally:
+            sys.stdout = old_stdout
+        self.assertTrue(is_error)
+        self.assertIn("bad value", result)
 
     def test_dispatch_shell_tool_scope_error(self):
         old_stdout = sys.stdout

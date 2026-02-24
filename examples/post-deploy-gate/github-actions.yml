@@ -1,0 +1,37 @@
+# Post-Deploy Gate — GitHub Actions
+#
+# Pattern:  Run a full DAST scan after your staging deployment succeeds.
+#           The scan blocks production promotion if vulnerabilities are found.
+#
+# Trigger:  workflow_run — fires automatically when the "Deploy to Staging"
+#           workflow completes successfully.
+#
+# Playbook: Default (playbooks/web_scan.md baked into the container image).
+#           For a custom playbook, volume-mount or use OPENDAST_PLAYBOOK.
+#
+# Prerequisites:
+#   1. A workflow named "Deploy to Staging" that deploys your app.
+#   2. Repository secret ANTHROPIC_API_KEY with your Anthropic API key.
+#   3. Replace https://staging.example.com with your staging URL.
+
+name: Post-Deploy DAST Gate
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Staging"]
+    types: [completed]
+
+jobs:
+  dast-gate:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/heggert/opendast:latest
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Run DAST scan
+        run: >
+          python main.py
+          --target "https://staging.example.com"
+          --token-limit 300000

@@ -1,0 +1,47 @@
+# On-Demand Scan — GitHub Actions
+#
+# Pattern:  Manually trigger a DAST scan with customizable target, token
+#           limit, and playbook content. Useful for ad-hoc security
+#           assessments, testing new playbooks, or scanning specific
+#           environments.
+#
+# Trigger:  workflow_dispatch with user-supplied inputs.
+#
+# Playbook: User-specified via workflow input. Falls back to the default
+#           playbook (baked into the image) when the playbook input is empty.
+#
+# Prerequisites:
+#   1. Repository secret ANTHROPIC_API_KEY with your Anthropic API key.
+
+name: On-Demand DAST Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target URL to scan"
+        required: true
+        default: "https://staging.example.com"
+      token_limit:
+        description: "Maximum token budget"
+        required: false
+        default: "300000"
+      playbook:
+        description: "Inline playbook markdown (leave empty for default playbook)"
+        required: false
+        default: ""
+
+jobs:
+  dast-on-demand:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/heggert/opendast:latest
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENDAST_PLAYBOOK: ${{ inputs.playbook }}
+    steps:
+      - name: Run DAST scan
+        run: >
+          python main.py
+          --target "${{ inputs.target }}"
+          --token-limit "${{ inputs.token_limit }}"

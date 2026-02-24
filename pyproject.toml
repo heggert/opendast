@@ -3,10 +3,10 @@ name = "opendast"
 version = "1.0.0"
 description = "AI-driven Dynamic Application Security Testing tool for CI/CD pipelines"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
-    "anthropic>=0.83.0",
-    "requests>=2.32.5",
+    "anthropic>=0.83.0,<1",
+    "requests>=2.32.5,<3",
 ]
 
 [tool.pytest.ini_options]
@@ -14,7 +14,7 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
@@ -22,7 +22,7 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.coverage.run]
-source = ["open_dast"]
+source = ["opendast"]
 
 [tool.coverage.report]
 show_missing = true

@@ -1,0 +1,59 @@
+# Merge Request Scan — GitHub Actions
+#
+# Pattern:  Run a lightweight DAST scan against a review/preview environment
+#           for every pull request. The scan blocks the merge if vulnerabilities
+#           are found, giving developers immediate feedback on their changes.
+#
+# Trigger:  pull_request targeting the main branch.
+#
+# Playbook: Inline via OPENDAST_PLAYBOOK — a focused scan covering security
+#           headers and information disclosure. Consider using a cheaper model
+#           (Sonnet or Haiku) for per-PR cost efficiency.
+#
+# Target URL:
+#   Replace the TARGET_URL with your dynamic review environment URL.
+#   Common patterns:
+#     - https://pr-${{ github.event.number }}.preview.example.com
+#     - https://staging.example.com (shared staging)
+#
+# Prerequisites:
+#   1. Repository secret ANTHROPIC_API_KEY with your Anthropic API key.
+#   2. A review/preview environment deployed before this workflow runs,
+#      or a shared staging environment.
+
+name: PR DAST Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  TARGET_URL: https://pr-${{ github.event.number }}.preview.example.com
+
+jobs:
+  dast-pr:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/heggert/opendast:latest
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENDAST_PLAYBOOK: |
+          # PR Security Scan
+          ## Scope & Rules
+          - Only test the provided target URL and its subpaths.
+          - Do NOT attempt destructive operations.
+          - Focus on fast, low-noise checks suitable for per-PR feedback.
+
+          ## Test Categories
+          ### 1. Security Headers
+          Send GET / and check for Content-Security-Policy, X-Frame-Options,
+          and Strict-Transport-Security headers.
+
+          ### 2. Information Disclosure
+          Probe for exposed /.env, /.git/config, and /server-status.
+    steps:
+      - name: Run DAST scan
+        run: >
+          python main.py
+          --target "$TARGET_URL"
+          --token-limit 300000

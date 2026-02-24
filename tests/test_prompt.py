@@ -1,8 +1,8 @@
-"""Tests for open_dast.prompt."""
+"""Tests for opendast.prompt."""
 
 import unittest
 
-from open_dast.prompt import build_system_prompt
+from opendast.prompt import build_system_prompt
 
 
 class TestBuildSystemPrompt(unittest.TestCase):
@@ -39,8 +39,6 @@ class TestBuildSystemPrompt(unittest.TestCase):
             "run_nikto",
             "run_sslyze",
             "run_dig",
-            "run_whatweb",
-            "run_dirb",
             "run_curl",
         ):
             self.assertIn(tool, prompt)

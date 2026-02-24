@@ -1,0 +1,44 @@
+# Post-Deploy Gate — GitLab CI/CD
+#
+# Pattern:  Run a full DAST scan after merging to the default branch.
+#           The scan blocks further pipeline stages if vulnerabilities are found.
+#
+# Trigger:  Runs on the default branch (typically after a staging deploy stage).
+#           Add this file as an includeable fragment or paste into your
+#           .gitlab-ci.yml after your deploy stage.
+#
+# Playbook: Default (playbooks/web_scan.md baked into the container image).
+#
+# Prerequisites:
+#   1. CI/CD variable ANTHROPIC_API_KEY (Settings > CI/CD > Variables,
+#      masked & protected).
+#   2. Replace https://staging.example.com with your staging URL.
+
+stages:
+  - deploy
+  - dast
+
+variables:
+  OPENDAST_IMAGE: ghcr.io/heggert/opendast:latest
+  TARGET_URL: https://staging.example.com
+  TOKEN_LIMIT: "300000"
+
+# Stub — replace with your actual deploy job.
+deploy-staging:
+  stage: deploy
+  script:
+    - echo "Deploying to staging..."
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+dast-post-deploy:
+  stage: dast
+  image: $OPENDAST_IMAGE
+  needs: ["deploy-staging"]
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+  script:
+    - python main.py --target "$TARGET_URL" --token-limit "$TOKEN_LIMIT"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  allow_failure: false

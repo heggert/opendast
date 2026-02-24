@@ -12,6 +12,5 @@ htmlcov/
 LICENSE
 README.md
 CLAUDE.md
-pyproject.toml
 .pre-commit-config.yaml
 .secrets.baseline

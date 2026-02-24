@@ -1,9 +1,9 @@
-"""Tests for open_dast.config."""
+"""Tests for opendast.config."""
 
 import os
 import unittest
 
-from open_dast.config import parse_arguments
+from opendast.config import parse_arguments
 
 
 class TestParseArguments(unittest.TestCase):
@@ -85,6 +85,58 @@ class TestParseArguments(unittest.TestCase):
             self.assertEqual(args.api_key, "sk-from-env")
         finally:
             del os.environ["ANTHROPIC_API_KEY"]
+
+    def test_playbook_content_arg(self):
+        args = parse_arguments(
+            [
+                "--target",
+                "http://example.com",
+                "--api-key",
+                "sk-test",
+                "--playbook-content",
+                "# Inline playbook\nTest XSS",
+            ]
+        )
+        self.assertEqual(args.playbook_content, "# Inline playbook\nTest XSS")
+
+    def test_playbook_content_defaults_empty(self):
+        env_backup = os.environ.pop("OPENDAST_PLAYBOOK", None)
+        try:
+            args = parse_arguments(["--target", "http://example.com", "--api-key", "sk-test"])
+            self.assertEqual(args.playbook_content, "")
+        finally:
+            if env_backup is not None:
+                os.environ["OPENDAST_PLAYBOOK"] = env_backup
+
+    def test_playbook_content_from_env(self):
+        os.environ["OPENDAST_PLAYBOOK"] = "# Env playbook"
+        try:
+            args = parse_arguments(["--target", "http://example.com", "--api-key", "sk-test"])
+            self.assertEqual(args.playbook_content, "# Env playbook")
+        finally:
+            del os.environ["OPENDAST_PLAYBOOK"]
+
+    def test_version_flag(self):
+        with self.assertRaises(SystemExit) as ctx:
+            parse_arguments(["--version"])
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_playbook_content_cli_overrides_env(self):
+        os.environ["OPENDAST_PLAYBOOK"] = "# Env playbook"
+        try:
+            args = parse_arguments(
+                [
+                    "--target",
+                    "http://example.com",
+                    "--api-key",
+                    "sk-test",
+                    "--playbook-content",
+                    "# CLI playbook",
+                ]
+            )
+            self.assertEqual(args.playbook_content, "# CLI playbook")
+        finally:
+            del os.environ["OPENDAST_PLAYBOOK"]
 
 
 if __name__ == "__main__":

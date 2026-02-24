@@ -1,10 +1,10 @@
-"""Tests for open_dast.logger."""
+"""Tests for opendast.logger."""
 
 import io
 import sys
 import unittest
 
-from open_dast.logger import log_info, log_pass, log_vuln
+from opendast.logger import log_info, log_pass, log_vuln
 
 
 class TestLogVuln(unittest.TestCase):

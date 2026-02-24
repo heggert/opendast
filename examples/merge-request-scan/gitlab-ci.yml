@@ -1,0 +1,53 @@
+# Merge Request Scan — GitLab CI/CD
+#
+# Pattern:  Run a lightweight DAST scan against a review environment for
+#           every merge request. The scan blocks the merge if vulnerabilities
+#           are found.
+#
+# Trigger:  merge_request_event pipeline source.
+#
+# Playbook: Inline via OPENDAST_PLAYBOOK — a focused scan covering security
+#           headers and information disclosure. Consider using a cheaper model
+#           (Sonnet or Haiku) for per-MR cost efficiency.
+#
+# Target URL:
+#   Uses the merge request IID to construct a dynamic review environment URL.
+#   Replace the TARGET_URL pattern with your actual review env URL scheme.
+#
+# Prerequisites:
+#   1. CI/CD variable ANTHROPIC_API_KEY (Settings > CI/CD > Variables,
+#      masked & protected).
+#   2. A review environment deployed for each merge request.
+
+stages:
+  - dast
+
+variables:
+  OPENDAST_IMAGE: ghcr.io/heggert/opendast:latest
+  TARGET_URL: https://mr-${CI_MERGE_REQUEST_IID}.review.example.com
+  TOKEN_LIMIT: "300000"
+
+dast-merge-request:
+  stage: dast
+  image: $OPENDAST_IMAGE
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    OPENDAST_PLAYBOOK: |
+      # MR Security Scan
+      ## Scope & Rules
+      - Only test the provided target URL and its subpaths.
+      - Do NOT attempt destructive operations.
+      - Focus on fast, low-noise checks suitable for per-MR feedback.
+
+      ## Test Categories
+      ### 1. Security Headers
+      Send GET / and check for Content-Security-Policy, X-Frame-Options,
+      and Strict-Transport-Security headers.
+
+      ### 2. Information Disclosure
+      Probe for exposed /.env, /.git/config, and /server-status.
+  script:
+    - python main.py --target "$TARGET_URL" --token-limit "$TOKEN_LIMIT"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  allow_failure: false

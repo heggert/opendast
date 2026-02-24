@@ -1,4 +1,4 @@
-"""Tests for open_dast.shell_tools."""
+"""Tests for opendast.shell_tools."""
 
 import io
 import subprocess
@@ -6,16 +6,14 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
-from open_dast.shell_tools import (
+from opendast.shell_tools import (
     SHELL_TOOL_DEFINITIONS,
     SHELL_TOOL_REGISTRY,
     build_curl_args,
     build_dig_args,
-    build_dirb_args,
     build_nikto_args,
     build_nmap_args,
     build_sslyze_args,
-    build_whatweb_args,
     execute_shell_tool,
     sanitize_args,
     validate_scope_host_only,
@@ -63,6 +61,31 @@ class TestValidateScopeUrl(unittest.TestCase):
     def test_trailing_slash_normalization(self):
         result = validate_scope_url("http://example.com/", "http://example.com/path")
         self.assertIsNone(result)
+
+    def test_blocks_credential_injection(self):
+        """SSRF: http://example.com@evil.com must not pass scope check."""
+        result = validate_scope_url("http://example.com", "http://example.com@evil.com/path")
+        self.assertIsNotNone(result)
+        self.assertIn("ERROR", result)
+
+    def test_blocks_suffix_attack(self):
+        """http://example.com.evil.com must not match http://example.com."""
+        result = validate_scope_url("http://example.com", "http://example.com.evil.com/path")
+        self.assertIsNotNone(result)
+        self.assertIn("ERROR", result)
+
+    def test_blocks_scheme_mismatch(self):
+        result = validate_scope_url("http://example.com", "https://example.com/path")
+        self.assertIsNotNone(result)
+        self.assertIn("ERROR", result)
+
+    def test_path_prefix_enforced(self):
+        self.assertIsNone(
+            validate_scope_url("http://example.com/app", "http://example.com/app/page")
+        )
+        self.assertIsNotNone(
+            validate_scope_url("http://example.com/app", "http://example.com/other")
+        )
 
 
 # ─── Argument Sanitization ───────────────────────────────────────────────────
@@ -193,53 +216,6 @@ class TestBuildDigArgs(unittest.TestCase):
         self.assertIn("not allowed", str(ctx.exception))
 
 
-class TestBuildWhatwebArgs(unittest.TestCase):
-    def test_default_args(self):
-        args = build_whatweb_args({"url": "http://example.com"}, "http://example.com")
-        self.assertIn("-a", args)
-        self.assertIn("1", args)
-        self.assertIn("--color=never", args)
-        self.assertIn("http://example.com", args)
-
-    def test_custom_aggression(self):
-        args = build_whatweb_args(
-            {"url": "http://example.com", "aggression": "3"}, "http://example.com"
-        )
-        idx = args.index("-a")
-        self.assertEqual(args[idx + 1], "3")
-
-    def test_invalid_aggression_defaults_to_1(self):
-        args = build_whatweb_args(
-            {"url": "http://example.com", "aggression": "99"}, "http://example.com"
-        )
-        idx = args.index("-a")
-        self.assertEqual(args[idx + 1], "1")
-
-
-class TestBuildDirbArgs(unittest.TestCase):
-    def test_default_wordlist(self):
-        args = build_dirb_args({"url": "http://example.com"}, "http://example.com")
-        self.assertEqual(args[0], "http://example.com")
-        self.assertEqual(args[1], "/usr/share/dirb/wordlists/common.txt")
-        self.assertIn("-S", args)
-        self.assertIn("-r", args)
-
-    def test_custom_valid_wordlist(self):
-        args = build_dirb_args(
-            {"url": "http://example.com", "wordlist": "/usr/share/dirb/wordlists/big.txt"},
-            "http://example.com",
-        )
-        self.assertEqual(args[1], "/usr/share/dirb/wordlists/big.txt")
-
-    def test_disallowed_wordlist_raises(self):
-        with self.assertRaises(ValueError) as ctx:
-            build_dirb_args(
-                {"url": "http://example.com", "wordlist": "/etc/passwd"},
-                "http://example.com",
-            )
-        self.assertIn("Wordlist must be in", str(ctx.exception))
-
-
 class TestBuildCurlArgs(unittest.TestCase):
     def test_default_get(self):
         args = build_curl_args({"url": "http://example.com"}, "http://example.com")
@@ -279,13 +255,46 @@ class TestBuildCurlArgs(unittest.TestCase):
         )
         self.assertNotIn("-L", args)
 
+    def test_newline_in_header_value_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            build_curl_args(
+                {
+                    "url": "http://example.com",
+                    "headers": {"X-Injected": "value\r\nEvil-Header: injected"},
+                },
+                "http://example.com",
+            )
+        self.assertIn("newline", str(ctx.exception))
+
+    def test_newline_in_header_key_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            build_curl_args(
+                {
+                    "url": "http://example.com",
+                    "headers": {"X-Bad\nHeader": "value"},
+                },
+                "http://example.com",
+            )
+        self.assertIn("newline", str(ctx.exception))
+
+    def test_carriage_return_in_header_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            build_curl_args(
+                {
+                    "url": "http://example.com",
+                    "headers": {"X-Header": "val\rue"},
+                },
+                "http://example.com",
+            )
+        self.assertIn("newline", str(ctx.exception))
+
 
 # ─── Tool Definitions ────────────────────────────────────────────────────────
 
 
 class TestShellToolDefinitions(unittest.TestCase):
     def test_definitions_count(self):
-        self.assertEqual(len(SHELL_TOOL_DEFINITIONS), 7)
+        self.assertEqual(len(SHELL_TOOL_DEFINITIONS), 5)
 
     def test_names_match_registry(self):
         def_names = {d["name"] for d in SHELL_TOOL_DEFINITIONS}
@@ -484,15 +493,6 @@ class TestExecuteShellTool(unittest.TestCase):
         self.assertIn("ERROR", result)
         self.assertIn("Invalid arguments", result)
 
-    def test_dirb_invalid_wordlist_returns_error(self):
-        result = execute_shell_tool(
-            "run_dirb",
-            {"url": "http://example.com", "wordlist": "/etc/passwd"},
-            "http://example.com",
-        )
-        self.assertIn("ERROR", result)
-        self.assertIn("Invalid arguments", result)
-
     def test_curl_url_scope_passes(self):
         mock_run = MagicMock(
             return_value=subprocess.CompletedProcess(
@@ -514,26 +514,27 @@ class TestExecuteShellTool(unittest.TestCase):
             self._restore_stdout()
         self.assertIn("Exit code: 0", result)
 
-    def test_whatweb_passes(self):
-        mock_run = MagicMock(
-            return_value=subprocess.CompletedProcess(
-                args=["whatweb"],
-                returncode=0,
-                stdout="http://example.com [200 OK]",
-                stderr="",
-            )
+    def test_curl_credential_injection_blocked(self):
+        """SSRF: http://example.com@evil.com must be blocked by url_scope."""
+        result = execute_shell_tool(
+            "run_curl",
+            {"url": "http://example.com@evil.com/"},
+            "http://example.com",
         )
-        self._suppress_stdout()
-        try:
-            result = execute_shell_tool(
-                "run_whatweb",
-                {"url": "http://example.com"},
-                "http://example.com",
-                shell_run=mock_run,
-            )
-        finally:
-            self._restore_stdout()
-        self.assertIn("Exit code: 0", result)
+        self.assertIn("ERROR", result)
+        self.assertIn("outside target scope", result)
+
+    def test_curl_newline_header_returns_error(self):
+        result = execute_shell_tool(
+            "run_curl",
+            {
+                "url": "http://example.com",
+                "headers": {"X-Inject": "val\r\nEvil: hdr"},
+            },
+            "http://example.com",
+        )
+        self.assertIn("ERROR", result)
+        self.assertIn("Invalid arguments", result)
 
     def test_nonzero_exit_code_reported(self):
         mock_run = MagicMock(

@@ -3,13 +3,19 @@
 import argparse
 import os
 
-from open_dast.constants import DEFAULT_MODEL, DEFAULT_TOKEN_LIMIT
+from opendast import __version__
+from opendast.constants import DEFAULT_MODEL, DEFAULT_TOKEN_LIMIT
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments. Pass argv for testing; None reads sys.argv."""
     parser = argparse.ArgumentParser(
-        description="Open-DAST: AI-Driven Dynamic Application Security Testing Tool",
+        description="OpenDAST: AI-Driven Dynamic Application Security Testing Tool",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"opendast {__version__}",
     )
     parser.add_argument(
         "--target",
@@ -31,6 +37,11 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--playbook",
         default="playbooks/web_scan.md",
         help="Path to the markdown playbook file (default: playbooks/web_scan.md)",
+    )
+    parser.add_argument(
+        "--playbook-content",
+        default=os.environ.get("OPENDAST_PLAYBOOK", ""),
+        help="Inline playbook markdown content (default: $OPENDAST_PLAYBOOK env var)",
     )
     parser.add_argument(
         "--model",

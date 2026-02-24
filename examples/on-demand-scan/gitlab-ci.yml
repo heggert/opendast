@@ -1,0 +1,38 @@
+# On-Demand Scan — GitLab CI/CD
+#
+# Pattern:  Manually trigger a DAST scan with customizable target, token
+#           limit, and playbook content. Useful for ad-hoc security
+#           assessments, testing new playbooks, or scanning specific
+#           environments.
+#
+# Trigger:  Manual (when: manual). Override variables in the pipeline UI
+#           before clicking "Run".
+#
+# Playbook: Overrideable via the OPENDAST_PLAYBOOK variable. Falls back to
+#           the default playbook (baked into the image) when empty.
+#
+# Prerequisites:
+#   1. CI/CD variable ANTHROPIC_API_KEY (Settings > CI/CD > Variables,
+#      masked & protected).
+#   2. Run from CI/CD > Pipelines > Run pipeline, overriding variables
+#      as needed.
+
+stages:
+  - dast
+
+variables:
+  OPENDAST_IMAGE: ghcr.io/heggert/opendast:latest
+  TARGET_URL: https://staging.example.com
+  TOKEN_LIMIT: "300000"
+  OPENDAST_PLAYBOOK: ""
+
+dast-on-demand:
+  stage: dast
+  image: $OPENDAST_IMAGE
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+  script:
+    - python main.py --target "$TARGET_URL" --token-limit "$TOKEN_LIMIT"
+  rules:
+    - when: manual
+  allow_failure: true

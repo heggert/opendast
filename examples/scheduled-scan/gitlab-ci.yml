@@ -1,0 +1,38 @@
+# Scheduled Scan — GitLab CI/CD
+#
+# Pattern:  Run a full DAST scan on a recurring schedule. Results are advisory
+#           and surface regressions or newly disclosed vulnerability classes.
+#
+# Trigger:  Pipeline schedule (configure in CI/CD > Schedules, e.g., weekly).
+#
+# Playbook: Default (playbooks/web_scan.md). The repo's playbooks directory
+#           is copied into the container so you can customize it without
+#           rebuilding the image.
+#
+# Prerequisites:
+#   1. CI/CD variable ANTHROPIC_API_KEY (Settings > CI/CD > Variables,
+#      masked & protected).
+#   2. Create a pipeline schedule (CI/CD > Schedules) with the desired
+#      cron expression (e.g., 0 2 * * 1 for weekly Monday 02:00 UTC).
+#   3. Replace https://staging.example.com with your staging URL.
+
+stages:
+  - dast
+
+variables:
+  OPENDAST_IMAGE: ghcr.io/heggert/opendast:latest
+  TARGET_URL: https://staging.example.com
+  TOKEN_LIMIT: "500000"
+
+dast-scheduled:
+  stage: dast
+  image: $OPENDAST_IMAGE
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+  before_script:
+    - cp -r playbooks /custom-playbooks
+  script:
+    - python main.py --target "$TARGET_URL" --playbook /custom-playbooks/web_scan.md --token-limit "$TOKEN_LIMIT"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true

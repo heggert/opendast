@@ -1,10 +1,10 @@
-"""Tests for open_dast.playbook."""
+"""Tests for opendast.playbook."""
 
 import os
 import tempfile
 import unittest
 
-from open_dast.playbook import load_playbook
+from opendast.playbook import load_playbook
 
 
 class TestLoadPlaybook(unittest.TestCase):

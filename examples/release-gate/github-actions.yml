@@ -1,0 +1,44 @@
+# Release Gate — GitHub Actions
+#
+# Pattern:  Run a full DAST scan when a version tag (v*) is pushed.
+#           Acts as a formal release approval checkpoint — the release
+#           pipeline is blocked if vulnerabilities are found.
+#
+# Trigger:  push of tags matching v* (e.g., v1.0.0, v2.3.1-rc.1).
+#
+# Playbook: Default (playbooks/web_scan.md baked into the container image).
+#
+# Prerequisites:
+#   1. Repository secret ANTHROPIC_API_KEY with your Anthropic API key.
+#   2. Replace https://staging.example.com with your staging/RC URL.
+#   3. Add your actual deploy job in deploy-rc (or wire up your existing
+#      release workflow).
+
+name: Release DAST Gate
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  deploy-rc:
+    runs-on: ubuntu-latest
+    steps:
+      # Stub — replace with your actual release candidate deployment.
+      - name: Deploy release candidate
+        run: echo "Deploying ${{ github.ref_name }} to staging..."
+
+  dast-release-gate:
+    needs: deploy-rc
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/heggert/opendast:latest
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Run DAST scan
+        run: >
+          python main.py
+          --target "https://staging.example.com"
+          --token-limit 300000
