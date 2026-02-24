@@ -39,6 +39,7 @@ def main() -> int:
         f"{token_count:,}/{args.token_limit:,}",
         iterations=iterations,
         duration=duration,
+        model=args.model,
     )
 
     # Exit code: 1 if any CRITICAL/HIGH/MEDIUM findings, 0 otherwise

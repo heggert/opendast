@@ -18,6 +18,7 @@ def print_summary(
     token_count: str,
     iterations: int = 0,
     duration: float = 0.0,
+    model: str = "",
 ) -> None:
     """Print a formatted scan summary to stdout."""
     border = f"{BOLD}{'=' * 60}{RESET}"
@@ -25,6 +26,8 @@ def print_summary(
     print(f"{BOLD}  SCAN SUMMARY{RESET}")
     print(border)
     print(f"  Target: {target}")
+    if model:
+        print(f"  Model: {model}")
     print(f"  Tokens Used: {token_count}")
     print(f"  Iterations: {iterations}")
     print(f"  Duration: {_format_duration(duration)}")

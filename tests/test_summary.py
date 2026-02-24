@@ -8,12 +8,14 @@ from opendast.summary import print_summary
 
 
 class TestPrintSummary(unittest.TestCase):
-    def _capture_summary(self, findings, target, token_count, iterations=0, duration=0.0):
+    def _capture_summary(self, findings, target, token_count, iterations=0, duration=0.0, model=""):
         captured = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = captured
         try:
-            print_summary(findings, target, token_count, iterations=iterations, duration=duration)
+            print_summary(
+                findings, target, token_count, iterations=iterations, duration=duration, model=model
+            )
         finally:
             sys.stdout = old_stdout
         return captured.getvalue()
@@ -76,6 +78,16 @@ class TestPrintSummary(unittest.TestCase):
         ]
         output = self._capture_summary(findings, "http://x.com", "0")
         self.assertIn("\033[93m", output)  # YELLOW
+
+    def test_model_displayed_when_provided(self):
+        output = self._capture_summary(
+            [], "http://example.com", "0", iterations=1, duration=10.0, model="claude-haiku-4-5"
+        )
+        self.assertIn("Model: claude-haiku-4-5", output)
+
+    def test_model_omitted_when_empty(self):
+        output = self._capture_summary([], "http://example.com", "0", iterations=1, duration=10.0)
+        self.assertNotIn("Model:", output)
 
     def test_info_severity_uses_reset_color(self):
         findings = [
